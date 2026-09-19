@@ -9,7 +9,7 @@ CHECK_OUT = "2026-10-09"
 NIGHTS = 2
 
 # 테스트 목표가: 300,000원 (알림 수신 확인 후 205,000원으로 변경)
-TARGET_PRICE_PER_NIGHT = 303000
+TARGET_PRICE_PER_NIGHT = 300000
 # ===================================================
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
@@ -63,9 +63,8 @@ def get_hotel_price():
         # 날짜/인원 고정 링크
         query_text = f"{HOTEL_QUERY} Osaka"
         encoded_q = urllib.parse.quote(query_text)
-        encoded_hotel = urllib.parse.quote("Hotel Hankyu RESPIRE OSAKA")
-        direct_link = f"https://www.google.com/travel/hotels/entity/CgoI39bKycGv5-5PEAE?q={encoded_hotel}&dates={CHECK_IN},{CHECK_OUT}&adults=2&gl=kr&hl=ko"
-        
+        direct_link = f"https://www.google.com/travel/hotels/{encoded_q}?dates={CHECK_IN}%2C{CHECK_OUT}&adults=2"
+
         return {
             "name": hotel_name,
             "price_per_night": price_per_night,
