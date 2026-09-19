@@ -4,7 +4,7 @@ import requests
 
 # ================= 기획 조건 설정 =================
 HOTEL_QUERY = "Hotel Hankyu RESPIRE OSAKA"
-CHECK_IN = "2026-10-04"
+CHECK_IN = "2026-10-07"
 CHECK_OUT = "2026-10-09"
 NIGHTS = 2
 
