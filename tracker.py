@@ -6,7 +6,7 @@ HOTEL_QUERY = "Hotel Hankyu RESPIRE OSAKA"
 CHECK_IN = "2026-10-07"
 CHECK_OUT = "2026-10-09"
 NIGHTS = 2  # 10.07 ~ 10.09 (2박)
-TARGET_PRICE_PER_NIGHT = 200000  # 1박당 세금 포함 목표가 (원)
+TARGET_PRICE_PER_NIGHT = 1000000  # 1박당 세금 포함 목표가 (원)
 # ===================================================
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
