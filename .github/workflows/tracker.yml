@@ -1,0 +1,31 @@
+name: Hotel Price Tracker
+
+on:
+  schedule:
+    # UTC 기준 22:00, 04:00, 10:00, 14:30 
+    # -> 한국 시간(KST) 매일 07:00, 13:00, 19:00, 23:30에 정확히 실행
+    - cron: '0 22,4,10 * * *'
+    - cron: '30 14 * * *'
+  workflow_dispatch: # 수동으로 즉시 테스트 실행할 수 있는 버튼
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 환경 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 필수 라이브러리 설치
+        run: pip install requests
+
+      - name: 가격 추적 및 알림 실행
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python tracker.py
