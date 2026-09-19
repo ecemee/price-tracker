@@ -8,7 +8,7 @@ CHECK_IN = "2026-10-07"
 CHECK_OUT = "2026-10-09"
 NIGHTS = 2
 
-# 목표가 설정: 실제 원하시는 기준인 20만원으로 설정 (테스트 시 250000 등으로 조절 가능)
+# 목표가: 1박당 희망가 설정 (테스트 시 300000, 실제 운영 시 200000)
 TARGET_PRICE_PER_NIGHT = 300000
 # ===================================================
 
@@ -51,53 +51,79 @@ def get_hotel_price():
             target = data["properties"][0]
 
         hotel_name = target.get("name", HOTEL_QUERY)
-        price_per_night = None
-        total_price = None
-        source_name = "구글 호텔 최저가 파트너"
 
-        # 1. prices 목록에서 최저가 파싱
-        prices_list = target.get("prices") or target.get("featured_prices") or []
-        if prices_list:
-            best_deal = prices_list[0]
-            source_name = best_deal.get("source", source_name)
-            rate_val = (
-                best_deal.get("rate_per_night", {}).get("lowest_extracted")
-                or best_deal.get("rate")
-                or best_deal.get("price")
+        # 수집된 모든 판매처 요금을 저장할 리스트
+        all_offers = []
+
+        # 1. prices 목록 전수 조사
+        prices_list = (
+            (target.get("prices") or [])
+            + (target.get("featured_prices") or [])
+            + (data.get("prices") or [])
+        )
+
+        for item in prices_list:
+            source = item.get("source", "예약 사이트")
+
+            # 1박 가격 또는 총액 파싱
+            nightly_val = (
+                item.get("rate_per_night", {}).get("lowest_extracted")
+                or item.get("rate")
+                or item.get("price")
             )
-            price_per_night = extract_number(rate_val)
+            parsed_nightly = extract_number(nightly_val)
 
-        # 2. total_rate 또는 rate_per_night에서 보정
-        if "total_rate" in target:
-            total_price = extract_number(
-                target["total_rate"].get("lowest_extracted")
+            total_val = item.get("total_rate", {}).get("lowest_extracted")
+            parsed_total = extract_number(total_val)
+
+            if parsed_nightly and not parsed_total:
+                parsed_total = parsed_nightly * NIGHTS
+            elif parsed_total and not parsed_nightly:
+                parsed_nightly = int(parsed_total / NIGHTS)
+
+            if parsed_nightly and parsed_nightly > 0:
+                all_offers.append(
+                    {
+                        "source": source,
+                        "nightly": parsed_nightly,
+                        "total": parsed_total,
+                    }
+                )
+
+        # 2. 최상위 기본 rate_per_night 확인
+        rate_info = target.get("rate_per_night", {})
+        base_nightly = extract_number(
+            rate_info.get("lowest_extracted")
+            or rate_info.get("extracted_lowest")
+            or rate_info.get("rate")
+        )
+        if base_nightly:
+            all_offers.append(
+                {
+                    "source": "구글 최저가",
+                    "nightly": base_nightly,
+                    "total": base_nightly * NIGHTS,
+                }
             )
 
-        if not price_per_night:
-            rate_info = target.get("rate_per_night", {})
-            price_per_night = extract_number(
-                rate_info.get("lowest_extracted")
-                or rate_info.get("extracted_lowest")
-                or rate_info.get("rate")
-            )
+        if not all_offers:
+            print("❌ 요금 목록을 찾지 못했습니다.")
+            return None
 
-        # 총액 계산 보정
-        if total_price and not price_per_night:
-            price_per_night = int(total_price / NIGHTS)
-        elif price_per_night and not total_price:
-            total_price = price_per_night * NIGHTS
+        # 3. 모든 제휴사 중 '1박 요금이 가장 저렴한 곳'으로 정렬하여 1위 선정
+        all_offers.sort(key=lambda x: x["nightly"])
+        best_deal = all_offers[0]
 
-        # 날짜가 풀리지 않는 구글 호텔 검색 규격 URL
+        # 날짜와 성인 수가 고정된 구글 호텔 직행 링크
         query_text = f"{HOTEL_QUERY} Osaka"
         encoded_q = urllib.parse.quote(query_text)
-        # 구글 호텔 전용 날짜 고정 링크 (체크인/아웃 파라미터 적용)
         direct_link = f"https://www.google.com/travel/hotels/{encoded_q}?dates={CHECK_IN}%2C{CHECK_OUT}&adults=2"
 
         return {
             "name": hotel_name,
-            "price_per_night": price_per_night,
-            "total_price": total_price,
-            "source": source_name,
+            "price_per_night": best_deal["nightly"],
+            "total_price": best_deal["total"],
+            "source": best_deal["source"],
             "link": direct_link,
         }
 
@@ -133,7 +159,7 @@ if __name__ == "__main__":
         link = info["link"]
 
         print(
-            f"[{hotel_name}] 판매처: {source} | 1박 평균: ₩{current_price:,} | 2박 총액: ₩{total_price:,} | 목표가: ₩{TARGET_PRICE_PER_NIGHT:,}"
+            f"[{hotel_name}] 최저가 판매처: {source} | 1박: ₩{current_price:,} | 2박 총액: ₩{total_price:,}"
         )
 
         if current_price <= TARGET_PRICE_PER_NIGHT:
@@ -141,7 +167,7 @@ if __name__ == "__main__":
                 f"🚨 *호텔 가격 알림!*\n\n"
                 f"🏨 *호텔*: {hotel_name}\n"
                 f"📅 *일정*: {CHECK_IN} ~ {CHECK_OUT} ({NIGHTS}박, 성인 2명)\n"
-                f"🏷 *최저가 판매처*: {source}\n"
+                f"🏷 *최저가 판매처*: *{source}*\n"
                 f"💰 *1박 평균*: ₩{current_price:,} (세금 포함)\n"
                 f"💵 *2박 총액*: ₩{total_price:,}\n"
                 f"🎯 *희망 목표가*: 1박 ₩{TARGET_PRICE_PER_NIGHT:,} 이하\n\n"
