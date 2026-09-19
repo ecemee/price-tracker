@@ -63,7 +63,7 @@ def get_hotel_price():
         # 날짜/인원 고정 링크
         query_text = f"{HOTEL_QUERY} Osaka"
         encoded_q = urllib.parse.quote(query_text)
-        direct_link = f"https://www.google.com/travel/hotels?q={encoded_q}&checkin={CHECK_IN}&checkout={CHECK_OUT}&adults=2"
+        direct_link = f"https://www.google.com/maps/search/?api=1&query=Hotel+Hankyu+RESPIRE+OSAKA&query_place_id=ChIJWbC_zo_nAGAR-D-jE83Ktco"
 
         return {
             "name": hotel_name,
