@@ -1,5 +1,4 @@
 import os
-import urllib.parse
 import requests
 
 # ================= 기획 조건 설정 =================
@@ -8,7 +7,7 @@ CHECK_IN = "2026-10-07"
 CHECK_OUT = "2026-10-09"
 NIGHTS = 2
 
-# 목표가: 1박당 희망가 설정 (테스트 시 300000, 실제 운영 시 200000)
+# 테스트용 30만원 (알림 확인 후 200000으로 변경)
 TARGET_PRICE_PER_NIGHT = 300000
 # ===================================================
 
@@ -24,9 +23,10 @@ def extract_number(val):
     return int(cleaned) if cleaned else None
 
 
-def get_hotel_price():
-    url = "https://serpapi.com/search"
-    params = {
+def get_exact_hotel_price():
+    # 1단계: 호텔 검색을 통해 상세 조회를 위한 property_token 추출
+    search_url = "https://serpapi.com/search"
+    search_params = {
         "engine": "google_hotels",
         "q": f"{HOTEL_QUERY}, Osaka",
         "check_in_date": CHECK_IN,
@@ -39,96 +39,104 @@ def get_hotel_price():
     }
 
     try:
-        res = requests.get(url, params=params, timeout=30)
-        data = res.json()
+        res = requests.get(search_url, params=search_params, timeout=30).json()
 
-        if "error" in data:
-            print(f"❌ API 오류: {data['error']}")
-            return None
+        token = res.get("property_token")
+        if not token and "properties" in res and len(res["properties"]) > 0:
+            token = res["properties"][0].get("property_token")
 
-        target = data
-        if "properties" in data and len(data["properties"]) > 0:
-            target = data["properties"][0]
-
-        hotel_name = target.get("name", HOTEL_QUERY)
-
-        # 수집된 모든 판매처 요금을 저장할 리스트
         all_offers = []
+        hotel_name = HOTEL_QUERY
 
-        # 1. prices 목록 전수 조사
-        prices_list = (
-            (target.get("prices") or [])
-            + (target.get("featured_prices") or [])
-            + (data.get("prices") or [])
-        )
-
-        for item in prices_list:
-            source = item.get("source", "예약 사이트")
-
-            # 1박 가격 또는 총액 파싱
-            nightly_val = (
-                item.get("rate_per_night", {}).get("lowest_extracted")
-                or item.get("rate")
-                or item.get("price")
+        # 2단계: property_token이 있으면 '상세 예약 창' 실시간 데이터 전수 조회
+        if token:
+            detail_params = {
+                "engine": "google_hotel_details",
+                "property_token": token,
+                "check_in_date": CHECK_IN,
+                "check_out_date": CHECK_OUT,
+                "adults": "2",
+                "currency": "KRW",
+                "gl": "kr",
+                "hl": "ko",
+                "api_key": SERPAPI_KEY,
+            }
+            detail_res = requests.get(
+                search_url, params=detail_params, timeout=30
+            ).json()
+            hotel_name = detail_res.get("name", hotel_name)
+            prices_list = (
+                detail_res.get("prices")
+                or detail_res.get("featured_prices")
+                or []
             )
-            parsed_nightly = extract_number(nightly_val)
 
-            total_val = item.get("total_rate", {}).get("lowest_extracted")
-            parsed_total = extract_number(total_val)
-
-            if parsed_nightly and not parsed_total:
-                parsed_total = parsed_nightly * NIGHTS
-            elif parsed_total and not parsed_nightly:
-                parsed_nightly = int(parsed_total / NIGHTS)
-
-            if parsed_nightly and parsed_nightly > 0:
-                all_offers.append(
-                    {
-                        "source": source,
-                        "nightly": parsed_nightly,
-                        "total": parsed_total,
-                    }
+            for item in prices_list:
+                source = item.get("source", "예약처")
+                # 총액(total_rate) 또는 1박 요금 추출
+                total_val = extract_number(
+                    item.get("total_rate", {}).get("lowest_extracted")
+                    or item.get("total_rate")
+                )
+                nightly_val = extract_number(
+                    item.get("rate_per_night", {}).get("lowest_extracted")
+                    or item.get("rate")
                 )
 
-        # 2. 최상위 기본 rate_per_night 확인
-        rate_info = target.get("rate_per_night", {})
-        base_nightly = extract_number(
-            rate_info.get("lowest_extracted")
-            or rate_info.get("extracted_lowest")
-            or rate_info.get("rate")
-        )
-        if base_nightly:
-            all_offers.append(
-                {
-                    "source": "구글 최저가",
-                    "nightly": base_nightly,
-                    "total": base_nightly * NIGHTS,
-                }
-            )
+                if total_val and not nightly_val:
+                    nightly_val = int(total_val / NIGHTS)
+                elif nightly_val and not total_val:
+                    total_val = nightly_val * NIGHTS
+
+                if total_val:
+                    all_offers.append(
+                        {
+                            "source": source,
+                            "nightly": nightly_val,
+                            "total": total_val,
+                        }
+                    )
+
+        # 상세 창에서 못 가져왔을 경우 검색 목록 데이터 백업 처리
+        if not all_offers:
+            raw_prices = res.get("prices") or []
+            for item in raw_prices:
+                tot = extract_number(
+                    item.get("total_rate", {}).get("lowest_extracted")
+                )
+                nit = extract_number(
+                    item.get("rate_per_night", {}).get("lowest_extracted")
+                )
+                if tot:
+                    all_offers.append(
+                        {
+                            "source": item.get("source", "예약처"),
+                            "nightly": nit if nit else int(tot / NIGHTS),
+                            "total": tot,
+                        }
+                    )
 
         if not all_offers:
-            print("❌ 요금 목록을 찾지 못했습니다.")
+            print("가격 데이터를 추출하지 못했습니다.")
             return None
 
-        # 3. 모든 제휴사 중 '1박 요금이 가장 저렴한 곳'으로 정렬하여 1위 선정
-        all_offers.sort(key=lambda x: x["nightly"])
+        # 진짜 최저가 판매처 정렬 (총액 기준 오름차순)
+        all_offers.sort(key=lambda x: x["total"])
         best_deal = all_offers[0]
 
-        # 날짜와 성인 수가 고정된 구글 호텔 직행 링크
-        query_text = f"{HOTEL_QUERY} Osaka"
-        encoded_q = urllib.parse.quote(query_text)
-        direct_link = f"https://www.google.com/travel/hotels/{encoded_q}?dates={CHECK_IN}%2C{CHECK_OUT}&adults=2"
+        # 구글 호텔 상세 페이지 링크
+        google_maps_link = f"https://www.google.com/travel/hotels/s/{token}?dates={CHECK_IN}%2C{CHECK_OUT}&adults=2"
 
         return {
             "name": hotel_name,
+            "source": best_deal["source"],
             "price_per_night": best_deal["nightly"],
             "total_price": best_deal["total"],
-            "source": best_deal["source"],
-            "link": direct_link,
+            "link": google_maps_link,
         }
 
     except Exception as e:
-        print(f"❌ 예외 발생: {e}")
+        print(f"에러 발생: {e}")
         return None
 
 
@@ -140,18 +148,14 @@ def send_telegram(message):
         "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
-    res = requests.post(url, json=payload, timeout=10)
-    if res.status_code == 200:
-        print("✅ 텔레그램 알림 발송 성공!")
-    else:
-        print(f"❌ 텔레그램 전송 실패: {res.text}")
+    requests.post(url, json=payload, timeout=10)
 
 
 if __name__ == "__main__":
-    print("호텔 가격 조회 시작...")
-    info = get_hotel_price()
+    print("실시간 호텔 상세 요금 조회 시작...")
+    info = get_exact_hotel_price()
 
-    if info and info["price_per_night"]:
+    if info:
         current_price = info["price_per_night"]
         total_price = info["total_price"]
         hotel_name = info["name"]
@@ -159,7 +163,7 @@ if __name__ == "__main__":
         link = info["link"]
 
         print(
-            f"[{hotel_name}] 최저가 판매처: {source} | 1박: ₩{current_price:,} | 2박 총액: ₩{total_price:,}"
+            f"[{hotel_name}] 판매처: {source} | 1박: ₩{current_price:,} | 2박 총액: ₩{total_price:,}"
         )
 
         if current_price <= TARGET_PRICE_PER_NIGHT:
@@ -174,9 +178,6 @@ if __name__ == "__main__":
                 f"👉 [구글 호텔 실시간 예약 바로가기]({link})"
             )
             send_telegram(msg)
+            print("텔레그램 발송 완료!")
         else:
-            print(
-                f"ℹ️ 현재가(₩{current_price:,})가 목표가(₩{TARGET_PRICE_PER_NIGHT:,})보다 높아 알림을 생략합니다."
-            )
-    else:
-        print("❌ 유효한 가격을 가져오지 못했습니다.")
+            print("목표가보다 높아 알림을 생략합니다.")
