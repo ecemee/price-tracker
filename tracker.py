@@ -6,7 +6,7 @@ HOTEL_QUERY = "Hotel Hankyu RESPIRE OSAKA"
 CHECK_IN = "2026-10-07"
 CHECK_OUT = "2026-10-09"
 NIGHTS = 2  # 10.07 ~ 10.09 (2박)
-TARGET_PRICE_PER_NIGHT = 1000000  # 1박당 세금 포함 목표가 (원)
+TARGET_PRICE_PER_NIGHT = 1000000  # 알림 테스트를 위해 100만원으로 설정 (성공 확인 후 200000으로 변경)
 # ===================================================
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
@@ -22,34 +22,41 @@ def get_hotel_price():
         "check_in_date": CHECK_IN,
         "check_out_date": CHECK_OUT,
         "currency": "KRW",
-        "adults": "2",
+        "gl": "kr",
+        "hl": "ko",
         "api_key": SERPAPI_KEY,
     }
 
     try:
-        response = requests.get(url, params=params, timeout=30).json()
-        properties = response.get("properties", [])
+        res = requests.get(url, params=params, timeout=30)
+        data = res.json()
 
-        if not properties:
-            print("호텔 검색 결과가 없습니다.")
+        # SerpApi 자체 에러(키 오류, 쿼리 오류 등) 체크
+        if "error" in data:
+            print(f"API 오류 메시지: {data['error']}")
             return None
 
-        # 가장 상단 매칭 호텔 추출
+        properties = data.get("properties", [])
+
+        if not properties:
+            print(f"'{HOTEL_QUERY}'에 대한 호텔 검색 결과 목록이 비어 있습니다.")
+            return None
+
+        # 매칭된 첫 번째 호텔 확인
         hotel = properties[0]
         hotel_name = hotel.get("name", HOTEL_QUERY)
 
-        # 1박 요금 (세금 및 봉사료 포함 기준 추출)
-        rate_info = hotel.get("rate_per_night", {})
-        price_extracted = rate_info.get("lowest_extracted")
+        # 1박 가격 파싱
+        price_extracted = None
+        if "rate_per_night" in hotel:
+            price_extracted = hotel["rate_per_night"].get("lowest_extracted")
 
-        # 만약 total_rate(총액)만 제공될 경우 2박으로 나누어 계산 보정
         if not price_extracted and "total_rate" in hotel:
             total = hotel["total_rate"].get("lowest_extracted", 0)
             if total > 0:
                 price_extracted = total / NIGHTS
 
-        # 예약 링크 또는 구글 호텔 검색 링크
-        booking_link = hotel.get(
+        link = hotel.get(
             "link",
             f"https://www.google.com/travel/hotels?q={HOTEL_QUERY}&dates={CHECK_IN},{CHECK_OUT}",
         )
@@ -57,11 +64,11 @@ def get_hotel_price():
         return {
             "name": hotel_name,
             "price_per_night": int(price_extracted) if price_extracted else 0,
-            "link": booking_link,
+            "link": link,
         }
 
     except Exception as e:
-        print(f"API 요청 또는 데이터 파싱 에러 발생: {e}")
+        print(f"스크립트 실행 중 에러 발생: {e}")
         return None
 
 
@@ -71,9 +78,12 @@ def send_telegram(message):
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": False,
     }
-    requests.post(url, json=payload, timeout=10)
+    res = requests.post(url, json=payload, timeout=10)
+    if res.status_code != 200:
+        print(f"텔레그램 전송 실패 ({res.status_code}): {res.text}")
+    else:
+        print("텔레그램 알림 발송 성공!")
 
 
 if __name__ == "__main__":
@@ -85,22 +95,20 @@ if __name__ == "__main__":
         link = result["link"]
 
         print(
-            f"[{hotel_name}] 현재 1박 최저가(세금포함): ₩{current_price:,} / 목표가: ₩{TARGET_PRICE_PER_NIGHT:,}"
+            f"[{hotel_name}] 현재 1박 최저가: ₩{current_price:,} / 설정 목표가: ₩{TARGET_PRICE_PER_NIGHT:,}"
         )
 
-        # 현재 1박 가격이 목표가(20만 원) 이하일 때만 발송
         if current_price <= TARGET_PRICE_PER_NIGHT:
             msg = (
                 f"🚨 *호텔 목표가 달성 알림!*\n\n"
                 f"🏨 *호텔*: {hotel_name}\n"
                 f"📅 *일정*: {CHECK_IN} ~ {CHECK_OUT} (2박)\n"
-                f"💰 *현재 1박 최저가*: ₩{current_price:,} (세금 포함)\n"
+                f"💰 *현재 1박 최저가*: ₩{current_price:,}\n"
                 f"🎯 *희망 목표가*: ₩{TARGET_PRICE_PER_NIGHT:,} 이하\n\n"
-                f"👉 [구글 호텔 최저가 예약 바로가기]({link})"
+                f"👉 [최저가 예약 바로가기]({link})"
             )
             send_telegram(msg)
-            print("텔레그램 알림 발송 완료!")
         else:
-            print("현재 가격이 목표가보다 높아 알림을 보내지 않았습니다.")
+            print("현재 가격이 목표가보다 높습니다.")
     else:
-        print("유효한 가격 정보를 수집하지 못했습니다.")
+        print("가격을 정상적으로 가져오지 못했습니다.")
