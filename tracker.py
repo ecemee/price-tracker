@@ -9,7 +9,7 @@ CHECK_OUT = "2026-10-09"
 NIGHTS = 2
 
 # 테스트 목표가: 300,000원 (알림 수신 확인 후 205,000원으로 변경)
-TARGET_PRICE_PER_NIGHT = 300000
+TARGET_PRICE_PER_NIGHT = 203000
 # ===================================================
 
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY")
